@@ -141,6 +141,33 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCONFIG_TUNE_VMAF=1
 
+      - name: Patch cpuinfo max macro (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -eux
+
+          CPUINFO_INIT="build/cpuinfo/src/x86/windows/init.c"
+
+          if [ ! -f "$CPUINFO_INIT" ]; then
+            echo "cpuinfo init.c not found: $CPUINFO_INIT"
+            find build -path "*cpuinfo*init.c" -print
+            exit 1
+          fi
+
+          if ! grep -q "#define max(a, b)" "$CPUINFO_INIT"; then
+            cp "$CPUINFO_INIT" "$CPUINFO_INIT.bak"
+            {
+              echo "#ifndef max"
+              echo "#define max(a, b) (((a) > (b)) ? (a) : (b))"
+              echo "#endif"
+              echo
+              cat "$CPUINFO_INIT.bak"
+            } > "$CPUINFO_INIT"
+          fi
+
+          head -n 20 "$CPUINFO_INIT"
+
       - name: Build (Windows / MSYS2)
         if: runner.os == 'Windows'
         shell: msys2 {0}
@@ -156,10 +183,8 @@ jobs:
           cp build/avmenc.exe artifact/
           cp build/avmdec.exe artifact/
 
-          # libvmaf runtime DLL
           find vmaf-install -name "*.dll" -exec cp -v {} artifact/ \; || true
 
-          # MinGW/UCRT runtime DLLs needed by the produced exe files
           for exe in artifact/avmenc.exe artifact/avmdec.exe; do
             ldd "$exe" | awk '/\/ucrt64\/bin\// { print $3 }' | while read -r dll; do
               if [ -f "$dll" ]; then
