@@ -158,6 +158,10 @@ jobs:
           if ! grep -q "#define max(a, b)" "$CPUINFO_INIT"; then
             cp "$CPUINFO_INIT" "$CPUINFO_INIT.bak"
             {
+              echo "#ifndef min"
+              echo "#define min(a, b) (((a) < (b)) ? (a) : (b))"
+              echo "#endif"
+              echo
               echo "#ifndef max"
               echo "#define max(a, b) (((a) > (b)) ? (a) : (b))"
               echo "#endif"
@@ -166,7 +170,24 @@ jobs:
             } > "$CPUINFO_INIT"
           fi
 
-          head -n 20 "$CPUINFO_INIT"
+          head -n 30 "$CPUINFO_INIT"
+
+      - name: Patch MSVC-only flags for MinGW Ninja build
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -eux
+
+          echo "Before patch, MSVC-only flags found in Ninja files:"
+          grep -RInE ' /(bigobj|nologo|EHsc|GF|MP|Gm-|wd[0-9]+)( |$)' build/*.ninja build/CMakeFiles/*.ninja || true
+
+          find build -name "*.ninja" -type f -print0 | xargs -0 perl -0pi -e '
+            s!(^|[ \t])/(bigobj|nologo|EHsc|GF|MP|Gm-)(?=([ \t\r\n]|$))!$1!g;
+            s!(^|[ \t])/wd[0-9]+(?=([ \t\r\n]|$))!$1!g;
+          '
+
+          echo "After patch, remaining MSVC-only flags:"
+          grep -RInE ' /(bigobj|nologo|EHsc|GF|MP|Gm-|wd[0-9]+)( |$)' build/*.ninja build/CMakeFiles/*.ninja || true
 
       - name: Build (Windows / MSYS2)
         if: runner.os == 'Windows'
