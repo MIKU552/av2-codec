@@ -50,9 +50,9 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
-      # 7. 运行单元测试
+      # 7. 运行单元测试 (使用 CTest 实现跨平台统一测试)
       - name: Run Unit Tests
-        run: cmake --build build --target runtests
+        run: ctest --test-dir build --build-config Release --parallel 4 --output-on-failure
 
       # 8a. 上传编译产物 (Linux / macOS)
       - name: Upload Artifacts (Linux / macOS)
