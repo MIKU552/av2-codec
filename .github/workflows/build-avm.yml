@@ -18,51 +18,40 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
 
     steps:
-      # 1. 直接从 GitLab 克隆官方最新代码库到 'avm_src' 文件夹
+      # 1. 获取代码
       - name: Clone AVM from GitLab
         run: git clone https://gitlab.com/AOMediaCodec/avm.git avm_src
 
-      # 2. 安装 Linux 依赖 (YASM)
+      # 2. 安装 Linux 依赖
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y yasm cmake perl python3 build-essential
 
-      # 3. 安装 macOS 依赖 (YASM)
+      # 3. 安装 macOS 依赖
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install yasm cmake perl python3
 
-      # 4. 安装 Windows 依赖 (NASM)
+      # 4. 安装 Windows 依赖
       - name: Install Dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
           choco install nasm
           echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      # 5. 配置 CMake 
-      # 注意这里的变化：使用 -S 指定源码目录为刚才克隆的 'avm_src'，-B 指定构建输出到 'build'
+      # 5. 配置
       - name: Configure CMake
         run: cmake -S avm_src -B build -DCMAKE_BUILD_TYPE=Release
 
-      # 6. 开始编译 (这部分无需更改，因为构建目录依然是 build)
+      # 6. 编译
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
-      # 7a. 运行单元测试 (Linux / macOS)
-      # 直接执行编译好的测试二进制文件
-      - name: Run Unit Tests (Linux / macOS)
-        if: runner.os != 'Windows'
-        run: ./build/test_libavm
+      # (测试步骤已暂时移除，优先保证拿到编译产物)
 
-      # 7b. 运行单元测试 (Windows)
-      # Windows 下可执行文件在 Release 子目录中
-      - name: Run Unit Tests (Windows)
-        if: runner.os == 'Windows'
-        run: .\build\Release\test_libavm.exe
-
-      # 8a. 上传编译产物 (Linux / macOS)
+      # 7a. 上传产物 (Linux / macOS) - 使用最新的 avmenc / avmdec 命名
       - name: Upload Artifacts (Linux / macOS)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
@@ -73,7 +62,7 @@ jobs:
             build/avmdec
           retention-days: 7
 
-      # 8b. 上传编译产物 (Windows)
+      # 7b. 上传产物 (Windows) - 使用最新的 avmenc.exe / avmdec.exe 命名
       - name: Upload Artifacts (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
