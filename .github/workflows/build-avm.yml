@@ -50,9 +50,17 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
-      # 7. 运行单元测试 (使用 CTest 实现跨平台统一测试)
-      - name: Run Unit Tests
-        run: ctest --test-dir build --build-config Release --parallel 4 --output-on-failure
+      # 7a. 运行单元测试 (Linux / macOS)
+      # 直接执行编译好的测试二进制文件
+      - name: Run Unit Tests (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: ./build/test_libavm
+
+      # 7b. 运行单元测试 (Windows)
+      # Windows 下可执行文件在 Release 子目录中
+      - name: Run Unit Tests (Windows)
+        if: runner.os == 'Windows'
+        run: .\build\Release\test_libavm.exe
 
       # 8a. 上传编译产物 (Linux / macOS)
       - name: Upload Artifacts (Linux / macOS)
