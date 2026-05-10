@@ -1,4 +1,4 @@
-name: Build AVM (AV2 Reference Encoder)
+name: Build AVM (AV2 Reference Encoder with VMAF)
 
 on:
   push:
@@ -15,39 +15,58 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
+        include:
+          - os: ubuntu-latest
+            artifact_name: avm-binaries-ubuntu-vmaf
+          - os: macos-latest
+            artifact_name: avm-binaries-macos-vmaf
+          - os: windows-2025-vs2026
+            artifact_name: avm-binaries-windows-mingw-vmaf
 
     steps:
       - name: Clone AVM from GitLab
+        if: runner.os != 'Windows'
         run: git clone https://gitlab.com/AOMediaCodec/avm.git avm_src
+
+      - name: Clone VMAF from GitHub
+        if: runner.os != 'Windows'
+        run: git clone https://github.com/Netflix/vmaf.git vmaf_src
 
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            git \
             yasm \
+            nasm \
             cmake \
             perl \
             python3 \
+            python3-pip \
             build-essential \
             pkg-config \
-            libvmaf-dev
+            meson \
+            ninja-build
+
+      - name: Build and Install libvmaf (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          meson setup vmaf_src/libvmaf vmaf_build \
+            --buildtype release \
+            --default-library shared \
+            --prefix "$RUNNER_TEMP/vmaf-install"
+          meson compile -C vmaf_build
+          meson install -C vmaf_build
+
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/vmaf-install/lib/x86_64-linux-gnu/pkgconfig:$RUNNER_TEMP/vmaf-install/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/vmaf-install/lib/x86_64-linux-gnu:$RUNNER_TEMP/vmaf-install/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
 
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install yasm cmake perl python3 pkg-config libvmaf
-
-      - name: Install Dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install nasm -y
-          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-          vcpkg install libvmaf:x64-windows
+          brew install yasm nasm cmake perl python3 pkg-config libvmaf
 
       - name: Configure CMake (Linux / macOS)
         if: runner.os != 'Windows'
@@ -56,17 +75,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCONFIG_TUNE_VMAF=1
 
-      - name: Configure CMake (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cmake -S avm_src -B build `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCONFIG_TUNE_VMAF=1 `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows
-
-      - name: Build
+      - name: Build (Linux / macOS)
+        if: runner.os != 'Windows'
         run: cmake --build build --config Release --parallel 4
 
       - name: Prepare Artifacts (Linux / macOS)
@@ -78,25 +88,91 @@ jobs:
           cp build/avmdec artifact/
           chmod +x artifact/avmenc artifact/avmdec
 
-      - name: Prepare Artifacts (Windows)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            find "$RUNNER_TEMP/vmaf-install" -name "libvmaf.so*" -exec cp -P {} artifact/ \; || true
+          fi
+
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            VMAF_LIB="$(brew --prefix libvmaf)/lib"
+            find "$VMAF_LIB" -name "libvmaf*.dylib" -exec cp -P {} artifact/ \; || true
+          fi
+
+      - name: Set up MSYS2 (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-yasm
+            mingw-w64-ucrt-x86_64-python
+
+      - name: Clone AVM and VMAF (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
         run: |
-          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          git clone https://gitlab.com/AOMediaCodec/avm.git avm_src
+          git clone https://github.com/Netflix/vmaf.git vmaf_src
 
-          Copy-Item build/Release/avmenc.exe artifact/
-          Copy-Item build/Release/avmdec.exe artifact/
+      - name: Build and Install libvmaf (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          meson setup vmaf_src/libvmaf vmaf_build \
+            --buildtype release \
+            --default-library shared \
+            --prefix "$PWD/vmaf-install"
+          meson compile -C vmaf_build
+          meson install -C vmaf_build
 
-          $vcpkgBin = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows\bin"
-          if (Test-Path $vcpkgBin) {
-            Copy-Item "$vcpkgBin\*.dll" artifact/ -ErrorAction SilentlyContinue
-          }
+      - name: Configure CMake (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          export PKG_CONFIG_PATH="$PWD/vmaf-install/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -S avm_src -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCONFIG_TUNE_VMAF=1
 
-          Get-ChildItem artifact
+      - name: Build (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          cmake --build build --config Release --parallel 4
+
+      - name: Prepare Artifacts (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          mkdir -p artifact
+
+          cp build/avmenc.exe artifact/
+          cp build/avmdec.exe artifact/
+
+          # libvmaf runtime DLL
+          find vmaf-install -name "*.dll" -exec cp -v {} artifact/ \; || true
+
+          # MinGW/UCRT runtime DLLs needed by the produced exe files
+          for exe in artifact/avmenc.exe artifact/avmdec.exe; do
+            ldd "$exe" | awk '/\/ucrt64\/bin\// { print $3 }' | while read -r dll; do
+              if [ -f "$dll" ]; then
+                cp -n "$dll" artifact/ || true
+              fi
+            done
+          done
+
+          ls -lah artifact
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: avm-binaries-${{ matrix.os }}-vmaf
+          name: ${{ matrix.artifact_name }}
           path: artifact/
           retention-days: 7
