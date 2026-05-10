@@ -1,0 +1,93 @@
+name: Build dav2d (VideoLAN AV2 Decoder)
+
+# 触发条件：推送到主分支、PR，或者手动触发
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: 
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 依然保持跨平台三剑客
+        os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
+    
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # 1. 直接从 VideoLAN 的代码库克隆 dav2d 源码
+      - name: Clone dav2d Source
+        run: git clone https://code.videolan.org/videolan/dav2d.git dav2d_src
+
+      # 2. 克隆测试数据 (README 中明确要求，用于跑测试)
+      - name: Clone Test Data
+        run: git clone https://code.videolan.org/videolan/dav2d-test-data.git dav2d_src/tests/dav2d-test-data
+
+      # 3. 设置 Python 环境 (Meson 是基于 Python 的工具)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # 4. 跨平台安装构建工具：Meson 和 Ninja (通过 pip 安装最干净、最新)
+      - name: Install Meson and Ninja
+        run: pip install meson ninja
+
+      # 5a. 安装 Linux 依赖 (NASM)
+      - name: Install NASM (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
+      # 5b. 安装 macOS 依赖 (NASM)
+      - name: Install NASM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install nasm
+
+      # 5c. 安装 Windows 依赖 (NASM)
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install nasm
+          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # 6. 配置 Meson
+      # --default-library=static: 静态链接，方便你下载后直接双击运行，不用找 dll/so
+      # -Dtestdata_tests=true: 开启官方测试
+      # --buildtype=release: 开启最高性能优化
+      - name: Configure Meson
+        run: meson setup build --default-library=static -Dtestdata_tests=true --buildtype=release
+        working-directory: dav2d_src
+
+      # 7. 开始编译 (调用 Ninja)
+      - name: Build with Ninja
+        run: ninja -C build
+        working-directory: dav2d_src
+
+      # 8. 运行官方测试
+      - name: Run Tests
+        run: meson test -C build -v
+        working-directory: dav2d_src
+
+      # 9a. 上传编译产物 (Linux / macOS)
+      # 参考 dav1d 的结构，可执行工具通常生成在 build/tools/ 目录下
+      - name: Upload Artifacts (Linux / macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dav2d-binary-${{ matrix.os }}
+          path: dav2d_src/build/tools/dav2d
+          retention-days: 7
+
+      # 9b. 上传编译产物 (Windows)
+      - name: Upload Artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dav2d-binary-${{ matrix.os }}
+          path: dav2d_src/build/tools/dav2d.exe
+          retention-days: 7
