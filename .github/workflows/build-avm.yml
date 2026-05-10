@@ -69,8 +69,8 @@ jobs:
         with:
           name: avm-binaries-${{ matrix.os }}
           path: |
-            build/aomenc
-            build/aomdec
+            build/avmenc
+            build/avmdec
           retention-days: 7
 
       # 8b. 上传编译产物 (Windows)
@@ -80,6 +80,6 @@ jobs:
         with:
           name: avm-binaries-${{ matrix.os }}
           path: |
-            build/Release/aomenc.exe
-            build/Release/aomdec.exe
+            build/Release/avmenc.exe
+            build/Release/avmdec.exe
           retention-days: 7
