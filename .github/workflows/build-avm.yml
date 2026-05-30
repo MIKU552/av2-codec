@@ -50,10 +50,16 @@ jobs:
       - name: Configure CMake (Windows)
         if: runner.os == 'Windows'
         run: cmake -S avm_src -B build -G "Visual Studio 18 2026" -A x64 -DCMAKE_BUILD_TYPE=Release
-        
-      # 6. 编译
-      - name: Build
+
+      # 6a. 编译 (Linux / macOS) - 保持 4 线程全速冲锋
+      - name: Build (Linux / macOS)
+        if: runner.os != 'Windows'
         run: cmake --build build --config Release --parallel 4
+
+      # 6b. 编译 (Windows) - 降低到 2 线程，防止 TensorFlow 撑爆 7GB 内存导致假死
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel 2
 
       # 7a. 上传产物 (Linux / macOS)
       - name: Upload Artifacts (Linux / macOS)
