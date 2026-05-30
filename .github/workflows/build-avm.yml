@@ -41,10 +41,16 @@ jobs:
           choco install nasm
           echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      # 5. 配置 CMake（显式指定 VS2026 生成器，防止误选 MinGW）
-      - name: Configure CMake
-        run: cmake -S avm_src -B build -G "Visual Studio 18 2026" -A x64 -DCMAKE_BUILD_TYPE=Release
+      # 5a. 配置 CMake (Linux / macOS) - 保持默认生成器
+      - name: Configure CMake (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: cmake -S avm_src -B build -DCMAKE_BUILD_TYPE=Release
 
+      # 5b. 配置 CMake (Windows) - 强行锁定 Visual Studio 生成器，防止误选 MinGW/Ninja
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S avm_src -B build -G "Visual Studio 18 2026" -A x64 -DCMAKE_BUILD_TYPE=Release
+        
       # 6. 编译
       - name: Build
         run: cmake --build build --config Release --parallel 4
