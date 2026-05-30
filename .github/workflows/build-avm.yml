@@ -1,224 +1,72 @@
-name: Build AVM (AV2 Reference Encoder with VMAF)
+name: Build AVM (AV2 Reference Encoder)
 
 on:
   push:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch:
+  workflow_dispatch: 
 
 jobs:
   build:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-
+    
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: avm-binaries-ubuntu-vmaf
-          - os: macos-latest
-            artifact_name: avm-binaries-macos-vmaf
-          - os: windows-2025-vs2026
-            artifact_name: avm-binaries-windows-mingw-vmaf
+        os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
 
     steps:
-      - name: Clone AVM from GitLab
-        if: runner.os != 'Windows'
-        run: git clone https://gitlab.com/AOMediaCodec/avm.git avm_src
+      # 1. 获取代码 (已更新为官方新的 GitHub 仓库地址)
+      - name: Clone AVM from GitHub
+        run: git clone https://github.com/AOMediaCodec/avm.git avm_src
 
-      - name: Clone VMAF from GitHub
-        if: runner.os != 'Windows'
-        run: git clone https://github.com/Netflix/vmaf.git vmaf_src
-
+      # 2. 安装 Linux 依赖
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            git \
-            yasm \
-            nasm \
-            cmake \
-            perl \
-            python3 \
-            python3-pip \
-            build-essential \
-            pkg-config \
-            meson \
-            ninja-build
+          sudo apt-get install -y yasm cmake perl python3 build-essential
 
-      - name: Build and Install libvmaf (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          meson setup vmaf_src/libvmaf vmaf_build \
-            --buildtype release \
-            --default-library shared \
-            --prefix "$RUNNER_TEMP/vmaf-install"
-          meson compile -C vmaf_build
-          meson install -C vmaf_build
-
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/vmaf-install/lib/x86_64-linux-gnu/pkgconfig:$RUNNER_TEMP/vmaf-install/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/vmaf-install/lib/x86_64-linux-gnu:$RUNNER_TEMP/vmaf-install/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
-
+      # 3. 安装 macOS 依赖
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install yasm nasm cmake perl python3 pkg-config libvmaf
+        run: brew install yasm cmake perl python3
 
-      - name: Configure CMake (Linux / macOS)
-        if: runner.os != 'Windows'
+      # 4. 安装 Windows 依赖
+      - name: Install Dependencies (Windows)
+        if: runner.os == 'Windows'
         run: |
-          cmake -S avm_src -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCONFIG_TUNE_VMAF=1
+          choco install nasm
+          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Build (Linux / macOS)
-        if: runner.os != 'Windows'
+      # 5. 配置 CMake（显式指定 VS2026 生成器，防止误选 MinGW）
+      - name: Configure CMake
+        run: cmake -S avm_src -B build -G "Visual Studio 18 2026" -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      # 6. 编译
+      - name: Build
         run: cmake --build build --config Release --parallel 4
 
-      - name: Prepare Artifacts (Linux / macOS)
+      # 7a. 上传产物 (Linux / macOS)
+      - name: Upload Artifacts (Linux / macOS)
         if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          mkdir -p artifact
-          cp build/avmenc artifact/
-          cp build/avmdec artifact/
-          chmod +x artifact/avmenc artifact/avmdec
-
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            find "$RUNNER_TEMP/vmaf-install" -name "libvmaf.so*" -exec cp -P {} artifact/ \; || true
-          fi
-
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            VMAF_LIB="$(brew --prefix libvmaf)/lib"
-            find "$VMAF_LIB" -name "libvmaf*.dylib" -exec cp -P {} artifact/ \; || true
-          fi
-
-      - name: Set up MSYS2 (Windows)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            git
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-meson
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-nasm
-            mingw-w64-ucrt-x86_64-yasm
-            mingw-w64-ucrt-x86_64-python
-
-      - name: Clone AVM and VMAF (Windows / MSYS2)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          git clone https://gitlab.com/AOMediaCodec/avm.git avm_src
-          git clone https://github.com/Netflix/vmaf.git vmaf_src
-
-      - name: Build and Install libvmaf (Windows / MSYS2)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          meson setup vmaf_src/libvmaf vmaf_build \
-            --buildtype release \
-            --default-library shared \
-            --prefix "$PWD/vmaf-install"
-          meson compile -C vmaf_build
-          meson install -C vmaf_build
-
-      - name: Configure CMake (Windows / MSYS2)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          export PKG_CONFIG_PATH="$PWD/vmaf-install/lib/pkgconfig:$PKG_CONFIG_PATH"
-          cmake -S avm_src -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCONFIG_TUNE_VMAF=1
-
-      - name: Patch cpuinfo max macro (Windows / MSYS2)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          set -eux
-
-          CPUINFO_INIT="build/cpuinfo/src/x86/windows/init.c"
-
-          if [ ! -f "$CPUINFO_INIT" ]; then
-            echo "cpuinfo init.c not found: $CPUINFO_INIT"
-            find build -path "*cpuinfo*init.c" -print
-            exit 1
-          fi
-
-          if ! grep -q "#define max(a, b)" "$CPUINFO_INIT"; then
-            cp "$CPUINFO_INIT" "$CPUINFO_INIT.bak"
-            {
-              echo "#ifndef min"
-              echo "#define min(a, b) (((a) < (b)) ? (a) : (b))"
-              echo "#endif"
-              echo
-              echo "#ifndef max"
-              echo "#define max(a, b) (((a) > (b)) ? (a) : (b))"
-              echo "#endif"
-              echo
-              cat "$CPUINFO_INIT.bak"
-            } > "$CPUINFO_INIT"
-          fi
-
-          head -n 30 "$CPUINFO_INIT"
-
-      - name: Patch MSVC-only flags for MinGW Ninja build
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          set -eux
-
-          echo "Before patch, MSVC-only flags found in Ninja files:"
-          grep -RInE ' /(bigobj|nologo|EHsc|GF|MP|Gm-|wd[0-9]+)( |$)' build/*.ninja build/CMakeFiles/*.ninja || true
-
-          find build -name "*.ninja" -type f -print0 | xargs -0 perl -0pi -e '
-            s!(^|[ \t])/(bigobj|nologo|EHsc|GF|MP|Gm-)(?=([ \t\r\n]|$))!$1!g;
-            s!(^|[ \t])/wd[0-9]+(?=([ \t\r\n]|$))!$1!g;
-          '
-
-          echo "After patch, remaining MSVC-only flags:"
-          grep -RInE ' /(bigobj|nologo|EHsc|GF|MP|Gm-|wd[0-9]+)( |$)' build/*.ninja build/CMakeFiles/*.ninja || true
-
-      - name: Build (Windows / MSYS2)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          cmake --build build --config Release --parallel 4
-
-      - name: Prepare Artifacts (Windows / MSYS2)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: |
-          mkdir -p artifact
-
-          cp build/avmenc.exe artifact/
-          cp build/avmdec.exe artifact/
-
-          find vmaf-install -name "*.dll" -exec cp -v {} artifact/ \; || true
-
-          for exe in artifact/avmenc.exe artifact/avmdec.exe; do
-            ldd "$exe" | awk '/\/ucrt64\/bin\// { print $3 }' | while read -r dll; do
-              if [ -f "$dll" ]; then
-                cp -n "$dll" artifact/ || true
-              fi
-            done
-          done
-
-          ls -lah artifact
-
-      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: artifact/
+          name: avm-binaries-${{ matrix.os }}
+          path: |
+            build/avmenc
+            build/avmdec
+          retention-days: 7
+
+      # 7b. 上传产物 (Windows)
+      - name: Upload Artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: avm-binaries-${{ matrix.os }}
+          path: |
+            build/Release/avmenc.exe
+            build/Release/avmdec.exe
           retention-days: 7
